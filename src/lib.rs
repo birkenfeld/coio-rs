@@ -22,7 +22,7 @@
 
 //! Coroutine scheduling with asynchronous I/O support
 
-#![feature(recover, std_panic, reflect_marker, fnbox)]
+#![feature(recover, std_panic, reflect_marker, fnbox, panic_handler)]
 
 #[macro_use]
 extern crate log;

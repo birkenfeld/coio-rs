@@ -181,6 +181,11 @@ impl Processor {
         PROCESSOR.with(|proc_opt| unsafe { (&mut *proc_opt.get()).as_mut() })
     }
 
+    /// Get the current running coroutine
+    pub fn current_coroutine(&self) -> Option<&Coroutine> {
+        self.current_coro.as_ref().map(|x| &**x)
+    }
+
     /// Obtains the currently running coroutine after setting it's state to Blocked.
     /// NOTE: DO NOT call any Scheduler or Processor method within the passed callback, other than ready().
     pub fn take_current_coroutine<U, F>(&mut self, f: F) -> U

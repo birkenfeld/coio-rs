@@ -60,6 +60,7 @@ pub struct Coroutine {
     preferred_processor: Option<WeakProcessor>,
     state: State,
     runnable: Option<Box<FnBox()>>,
+    name: Option<String>,
 }
 
 unsafe impl Send for Coroutine {}
@@ -72,11 +73,16 @@ impl Coroutine {
             preferred_processor: None,
             state: State::Initialized,
             runnable: runnable,
+            name: None,
         })
     }
 
     pub unsafe fn empty() -> Handle {
         Coroutine::new(Context::empty(), None, None)
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_ref().map(|x| &x[..])
     }
 
     pub fn spawn_opts(f: Box<FnBox()>, opts: Options) -> Handle {
@@ -85,6 +91,7 @@ impl Coroutine {
         });
 
         let mut coro = Coroutine::new(Context::empty(), Some(stack), Some(f));
+        coro.name = opts.name;
         let coro_ptr: *mut Coroutine = &mut *coro as *mut Coroutine;
         let stack_ptr: *mut Stack = coro.stack.as_mut().unwrap();
         coro.context.init_with(coroutine_initialize,

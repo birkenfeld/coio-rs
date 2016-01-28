@@ -29,12 +29,13 @@ use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
+use std::panic;
 
 use mio::{EventLoop, Evented, Handler, Token, EventSet, PollOpt};
 use mio::util::Slab;
 
 use runtime::processor::{Processor, ProcMessage};
-use coroutine::{SendableCoroutinePtr, Handle};
+use coroutine::{SendableCoroutinePtr, Handle, ForceUnwind};
 use options::Options;
 
 /// A handle that could join the coroutine
@@ -260,6 +261,43 @@ impl Scheduler {
         where M: FnOnce() -> R + Send + 'static,
               R: Send + 'static
     {
+        panic::set_handler(|panic_info| {
+            if panic_info.payload().is::<ForceUnwind>() {
+                // Ignore it
+            } else {
+                let msg = match panic_info.payload().downcast_ref::<String>() {
+                    Some(msg) => &msg[..],
+                    None => {
+                        match panic_info.payload().downcast_ref::<&'static str>() {
+                            Some(msg) => *msg,
+                            None => "Box<Any>",
+                        }
+                    }
+                };
+
+                let (file, line) = match panic_info.location() {
+                    Some(loc) => {
+                        (loc.file(), loc.line())
+                    },
+                    None => {
+                        ("<unknown>", 0)
+                    }
+                };
+
+                let name = match Processor::current() {
+                    None => "<unnamed>",
+                    Some(p) => {
+                        match p.current_coroutine() {
+                            Some(c) => c.name().unwrap_or("<unnamed>"),
+                            None => "<unnamed>",
+                        }
+                    }
+                };
+
+                println!("coroutine '{}' panicked at '{}', {}:{}", name, msg, file, line);
+            }
+        });
+
         let mut handles = Vec::with_capacity(self.expected_worker_count);
         let mut handlers = Vec::with_capacity(self.expected_worker_count);
         let mut stealers = Vec::with_capacity(self.expected_worker_count);
@@ -312,10 +350,13 @@ impl Scheduler {
                         let _ = hdl.join();
                     }
 
+                    panic::take_handler();
+
                     return main_ret;
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
+                    panic::take_handler();
                     panic!("Main coro is disconnected");
                 }
             }
