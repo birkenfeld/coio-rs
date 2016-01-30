@@ -87,7 +87,6 @@ pub struct ProcessorInner {
     chan_sender: Sender<ProcMessage>,
     chan_receiver: Receiver<ProcMessage>,
 
-    is_exiting: bool,
     thread_handle: Option<Thread>,
     should_wake_up: AtomicBool,
 }
@@ -122,7 +121,6 @@ impl Processor {
                 chan_sender: tx,
                 chan_receiver: rx,
 
-                is_exiting: false,
                 thread_handle: None,
                 should_wake_up: AtomicBool::new(false),
             }),
@@ -191,7 +189,7 @@ impl Processor {
                         // If sending fails Scheduler::run()'s loop would never quit --> unwrap.
                         tx.send(ret).unwrap();
                     };
-                    p.spawn_opts(Box::new(wrapper), Options::default());
+                    p.spawn_opts(Box::new(wrapper), Options::new().name("<main>".to_owned()));
 
                     p.schedule();
                 })
@@ -264,11 +262,7 @@ impl Processor {
         'outerloop: loop {
             // 1. Run all tasks in local queue
             while let Some(hdl) = self.queue_worker.pop() {
-                if !self.is_exiting {
-                    self.resume(hdl);
-                } else {
-                    drop(hdl);
-                }
+                self.resume(hdl);
             }
 
             // 2. Check the mainbox
@@ -279,17 +273,12 @@ impl Processor {
                     match msg {
                         ProcMessage::NewNeighbor(nei) => self.neighbor_stealers.push(nei),
                         ProcMessage::Shutdown => {
-                            self.is_exiting = true;
                             resume_all_tasks = true;
                         }
                         ProcMessage::Ready(mut coro) => {
-                            if !self.is_exiting {
-                                coro.set_preferred_processor(Some(self.weak_self.clone()));
-                                self.ready(coro);
-                                resume_all_tasks = true;
-                            } else {
-                                drop(coro);
-                            }
+                            coro.set_preferred_processor(Some(self.weak_self.clone()));
+                            self.ready(coro);
+                            resume_all_tasks = true;
                         }
                         ProcMessage::Exit => {
                             break 'outerloop;
@@ -331,6 +320,11 @@ impl Processor {
                     break;
                 }
             }
+        }
+
+        // Clean up
+        while let Some(hdl) = self.queue_worker.pop() {
+            drop(hdl);
         }
 
         self.main_coro.set_state(State::Finished);
@@ -396,12 +390,6 @@ impl Processor {
         self.main_coro.set_state(State::Suspended);
         target.set_state(State::ForceUnwinding);
         self.main_coro.raw_yield_to(target);
-    }
-
-    #[doc(hiddle)]
-    pub unsafe fn coroutine_finish(&mut self, coro: &mut Coroutine) {
-        let main_coro: *mut Coroutine = &mut *self.main_coro;
-        coro.yield_to(State::Finished, &mut *main_coro);
     }
 }
 
